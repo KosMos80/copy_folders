@@ -16,7 +16,7 @@ int proces_copy = 0;
 
 typedef void(*fp)(void);
 
-#define INTERVAL 100000  // интервал таймера  -- 100000 us - 100 ms
+#define INTERVAL 1000 //00  // интервал таймера  -- 100000 us - 100 ms
 struct itimerval tout_val;
 
 static void timerevent(void)
