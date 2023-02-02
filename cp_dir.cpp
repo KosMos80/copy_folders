@@ -73,10 +73,11 @@ void send_comm(const char *parent_dir, const char *buffrom)
 	int fl = 0; 
 	int dr = 0;
 	// count files, folders and AllSize
+	std::cout << "Count files, folders and AllSize" << std::endl;
 	while(fgets(var, sizeof(var) - 1, fp) != 0)
 		{
 		path = deldotslash(var);
-		std::cout << path << std::endl;
+		//std::cout << path << std::endl;
 		int64_t fsize = sizefile(path);
 		if(fsize < 2147483647)
 			{
@@ -93,6 +94,8 @@ void send_comm(const char *parent_dir, const char *buffrom)
 		std::cout << " Total count files and dir: " << fl + dr << std::endl;
 		max_nom_buf = allsize; // max limit for progress bar
 	pclose(fp);
+	
+	std::cout << "Preparation for copying" << std::endl;
 	
 	struct path_type{ char path[128];};
 	path_type *dirs = new path_type[dr+1];
@@ -121,13 +124,15 @@ void send_comm(const char *parent_dir, const char *buffrom)
 	pclose(fp);
 	
 	// Create dir tree 
+	std::cout << "Folder tree creation" << std::endl;
 	for(int ind = 0; ind < dr; ind++)
 	{
 		last_dir(dirs[ind].path);
 		chdir(parent_dir);
 	}
 	delete[] dirs;
-	
+
+	std::cout << "Copying files ..."<< std::endl;	
 	std::string from_path = buffrom;
 	from_path.append("/");
 	std::string to_path = "";
@@ -138,6 +143,7 @@ void send_comm(const char *parent_dir, const char *buffrom)
 	proces_copy = 1;
 	
 	// copy files from fls-array
+
 	for(int ind = 0; ind < fl; ind++)
 	{
 		std::string src = from_path;
