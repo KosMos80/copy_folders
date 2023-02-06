@@ -5,18 +5,31 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <cstring>
-#include <signal.h> 
+#include <signal.h>
+#include <dirent.h> 
 
 #include "copy_file.h"
 
 int64_t max_nom_buf = 0;
 int64_t now_nom_buf = 0;
 
+volatile int d_count = 0;
+volatile int f_count = 0;
+volatile int max_length = 0;
+volatile int64_t allsize = 0;
+
+
+struct path_type { char path[250];};
+path_type *dirs = new path_type[0];
+path_type *fls = new path_type[0];
+
+std::string path_from = "";
+
 int proces_copy = 0;
 
 typedef void(*fp)(void);
 
-#define INTERVAL 1000 //00  // интервал таймера  -- 100000 us - 100 ms
+#define INTERVAL 1000  // интервал таймера  -- 1000 us - 1 ms
 struct itimerval tout_val;
 
 static void timerevent(void)
@@ -49,90 +62,96 @@ void registertimer()
      }
 //////////////////////////////////////////////////
 
-std::string deldotslash(char *var)
+int first_dir(std::string path_now, int vetka = 0)
 {
-std::string res = "";
-	int i = 2;
-	while(var[i] != 0)
+	std::string path_temp = path_from;
+	path_temp.append(path_now);
+	chdir(path_temp.c_str());
+	DIR *dir = opendir(path_temp.c_str());
+	//std::cout << path_now.c_str() << std::endl;
+	if(dir)
 		{
-			i++;
+		dirent *ent;
+		while((ent=readdir(dir))!=NULL)
+		  {
+	    if(strcmp("..",ent->d_name)&&strcmp(".",ent->d_name))
+	        {
+			  std::string new_path = path_now;
+			  new_path.append("/");
+			  new_path.append(ent->d_name);
+			  int length = new_path.length();
+			  if(max_length < length) max_length = length;
+			  if(ent->d_type == 4) // eshe folder in folder
+				{
+					first_dir(new_path.c_str(), vetka);
+				}
+				else
+				{
+					//std::cout << " F " << new_path << std::endl;
+					std::string path_temp_file = path_from;
+					path_temp_file.append(new_path);
+					int64_t fsize = sizefile(path_temp_file.c_str());
+					allsize = allsize + fsize;
+					if(vetka)
+						{
+							strcpy(fls[f_count].path, new_path.c_str());
+							//std::cout << " F " << new_path << " " << fsize/1024 << "kB" << std::endl;
+						}
+					f_count++;
+				}
+		    }
+		  }
+		d_count++;  
+		closedir(dir);
 		}
-	res.append(var, 2, i-3);
-	return res;
+		else 
+		{
+			std::cout << d_count << " " << " Warning! Folder not open : " << path_now << std::endl;
+		}
+	//std::cout << path_now << std::endl;
+	if(vetka)
+		{
+			strcpy(dirs[d_count - 1].path, path_now.c_str());
+			//std::cout << d_count << "-" << path_now << std::endl;
+		}
 }
 
 void send_comm(const char *parent_dir, const char *buffrom)
 {
-	const char *comm = "find";
-	char var[128];
-	FILE *fp;
+	path_from = "";
+	path_from.append(buffrom);
 	std::string path;
-	int64_t allsize = 0;
 	std::string nm;
-	fp = popen(comm, "r");
-	int fl = 0; 
-	int dr = 0;
 	// count files, folders and AllSize
 	std::cout << "Count files, folders and AllSize" << std::endl;
-	while(fgets(var, sizeof(var) - 1, fp) != 0)
-		{
-		path = deldotslash(var);
-		//std::cout << path << std::endl;
-		int64_t fsize = sizefile(path);
-		if(fsize < 2147483647)
-			{
-			allsize = allsize + fsize;
-			fl++;
-			}
-			else
-			{
-			dr++;
-			}
-		}
-		std::cout << std::endl;
-		std::cout << " All size files: " << allsize << std::endl;
-		std::cout << " Total count files and dir: " << fl + dr << std::endl;
-		max_nom_buf = allsize; // max limit for progress bar
-	pclose(fp);
+	d_count = 0;
+	f_count = 0;
+	first_dir("", 0);
+
+	std::cout << std::endl;
+	std::cout << " All size files: " << allsize << std::endl;
+	std::cout << " Total count files and dir: " << f_count + d_count << std::endl;
+	max_nom_buf = allsize; // max limit for progress bar
+	
+	dirs = new path_type[d_count];
+	fls = new path_type[f_count];
 	
 	std::cout << "Preparation for copying" << std::endl;
 	
-	struct path_type{ char path[128];};
-	path_type *dirs = new path_type[dr+1];
-	path_type *fls = new path_type[fl+1];
+	f_count = 0;
+	d_count = 0;
 	
-	fp = popen(comm, "r");
-	dr = 0;
-	fl = 0;
-	while(fgets(var, sizeof(var) - 1, fp) != 0)
-		{
-		path = deldotslash(var);
-		unsigned long int fsize = sizefile(path);
-		if(fsize < 2147483647)
-			{
-				// create list of files
-				strcpy(fls[fl].path, path.c_str());
-				fl++;
-			}
-			else
-			{
-				// create list of folders
-				strcpy(dirs[dr].path, path.c_str());
-				dr++;
-			}
-		}
-	pclose(fp);
-	
+	first_dir("", 1);
+
 	// Create dir tree 
 	std::cout << "Folder tree creation" << std::endl;
-	for(int ind = 0; ind < dr; ind++)
+	for(int ind = 0; ind < d_count; ind++)
 	{
-		last_dir(dirs[ind].path);
 		chdir(parent_dir);
+		last_dir(dirs[ind].path);
 	}
 	delete[] dirs;
-
-	std::cout << "Copying files ..."<< std::endl;	
+	
 	std::string from_path = buffrom;
 	from_path.append("/");
 	std::string to_path = "";
@@ -143,8 +162,8 @@ void send_comm(const char *parent_dir, const char *buffrom)
 	proces_copy = 1;
 	
 	// copy files from fls-array
-
-	for(int ind = 0; ind < fl; ind++)
+	std::cout << "Copying files ..."<< std::endl;
+	for(int ind = 0; ind < f_count; ind++)
 	{
 		std::string src = from_path;
 		std::string out = to_path;
@@ -153,22 +172,23 @@ void send_comm(const char *parent_dir, const char *buffrom)
 		out.append(file_path);
 		copyfile(src.c_str(), out.c_str());
 	}
+	
 	delete[] fls;
 	proces_copy = 2;
 }
 
 
 int main(void){
-const int PATH_MAX = 64;
-char buffrom[PATH_MAX] = "";	
-char buffer[PATH_MAX] = "";
+const int PATHMAX = 128;
+char buffrom[PATHMAX] = "";	
+char buffer[PATHMAX] = "";
 
-if (getcwd(buffer, sizeof(buffer)) != NULL) 
+if(getcwd(buffer, sizeof(buffer)) != NULL) 
 	   {
 		   std::cout << std::endl;
 		   std::cout << "Current working directory (full path): "<< buffer << std::endl;
 	   }
-	
+
 std::cout << std::endl;
 std::cout << "Enter Source folder (full path):" << std::endl;
 std::cin >> buffrom; std::cout << std::endl;
